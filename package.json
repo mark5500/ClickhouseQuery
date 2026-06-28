@@ -10,7 +10,8 @@
     "seed:bmi": "tsx src/seed-bmi.ts",
     "seed:demographics": "tsx src/seed-demographics.ts",
     "seed:blood-pressure": "tsx src/seed-blood-pressure.ts",
-    "server": "tsx src/server.ts",
+    "server": "tsx watch src/server.ts",
+    "sql:write": "tsx src/write-sql-files.ts",
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {

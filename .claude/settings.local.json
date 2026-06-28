@@ -41,7 +41,29 @@
       "Bash(pkill -f \"tsx src/server.ts\" 2>/dev/null; sleep 1; nohup npx tsx src/server.ts > /tmp/api-server.log 2>&1 & sleep 1.5 && cat /tmp/api-server.log)",
       "Bash(lsof -ti:5173)",
       "Bash(xargs kill -9)",
-      "Bash(curl -s http://localhost:3001/api/visualisations/bmi-vs-age/data)"
+      "Bash(curl -s http://localhost:3001/api/visualisations/bmi-vs-age/data)",
+      "Bash(curl -s -u default:changeme http://localhost:8123/?allow_experimental_json_type=1 --data-binary ' *)",
+      "Bash(echo \"create exit: $?\")",
+      "Bash(time curl -s -u default:changeme http://localhost:8123/?allow_experimental_json_type=1 --data-binary ' *)",
+      "Bash(echo \"insert exit: $?\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT count\\(\\) FROM data_points_v2\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT payload.givenNames::String AS gn, payload.familyName::String AS fn, payload.dateOfBirth::String AS dob FROM data_points_v2 WHERE data_extract_id='demographics' LIMIT 3 FORMAT PrettyCompact\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT partition, rows, formatReadableSize\\(bytes_on_disk\\) AS size FROM system.parts WHERE table='data_points_v2' AND active ORDER BY partition FORMAT PrettyCompact\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT payload.\\\\`givenNames\\\\`::String AS gn FROM data_points_v2 WHERE data_extract_id='demographics' LIMIT 1 FORMAT PrettyCompact\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT count\\(\\) FROM data_points_v2 WHERE data_extract_id='bmi' AND payload.\\\\`bmi\\\\`::Float64 > 30 FORMAT PrettyCompact\")",
+      "Bash(CLICKHOUSE_PASSWORD=changeme BENCH_TABLE=data_points_v2 npx tsx src/benchmark.ts)",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"OPTIMIZE TABLE data_points FINAL\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"OPTIMIZE TABLE data_points_v2 FINAL\")",
+      "Bash(CLICKHOUSE_PASSWORD=changeme BENCH_TABLE=data_points npx tsx src/benchmark.ts)",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT count\\(\\) FROM data_points\")",
+      "Bash(CLICKHOUSE_PASSWORD=changeme npx tsx src/benchmark.ts)",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT table, formatReadableSize\\(sum\\(bytes_on_disk\\)\\) AS disk FROM system.parts WHERE table IN \\('data_points','data_points_old'\\) AND active GROUP BY table FORMAT PrettyCompact\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SELECT partition, count\\(\\) AS parts, sum\\(rows\\) AS rows FROM system.parts WHERE table='data_points' AND active GROUP BY partition FORMAT PrettyCompact\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"DROP TABLE data_points_old\")",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary \"SHOW TABLES FORMAT PrettyCompact\")",
+      "Bash(rm /Users/markschofield/Claude/Projects/QueryBuilder/sql/*.sql *)",
+      "Bash(curl -s -u default:changeme http://localhost:8123/ --data-binary ' *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

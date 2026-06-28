@@ -4,8 +4,8 @@ import { ensureDataPointsTable, randomSubmittedAt } from "./seed-helpers.js";
 import { subjects } from "./subjects.js";
 import { bmiDataExtract, type DataPoint, type ExternalBmiRecord } from "./types.js";
 
-const RECORDS_PER_SUBJECT_MIN = 1;
-const RECORDS_PER_SUBJECT_MAX = 3;
+const RECORDS_PER_SUBJECT_MIN = 10;
+const RECORDS_PER_SUBJECT_MAX = 40;
 
 function randomInRange(min: number, max: number): number {
   return Math.random() * (max - min) + min;
@@ -59,7 +59,7 @@ async function main() {
       data_extract_id: dp.dataExtractId,
       subject_id: dp.subjectId,
       submitted_at: dp.submittedAt,
-      payload: JSON.stringify(dp.payload),
+      payload: dp.payload,
     })),
     format: "JSONEachRow",
   });

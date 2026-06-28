@@ -7,7 +7,7 @@ import { demographicsDataExtract, type DataPoint, type ExternalDemographicsRecor
 // Most subjects have a single demographics submission, but some have had
 // their record updated and resubmitted one or more times.
 const RESUBMISSION_CHANCE = 0.2;
-const MAX_SUBMISSIONS_PER_SUBJECT = 3;
+const MAX_SUBMISSIONS_PER_SUBJECT = 1;
 
 const FEMALE_GIVEN_NAMES = [
   "Olivia", "Emma", "Ava", "Sophia", "Isabella", "Mia", "Amelia", "Harper", "Evelyn", "Charlotte",
@@ -107,7 +107,7 @@ async function main() {
       data_extract_id: dp.dataExtractId,
       subject_id: dp.subjectId,
       submitted_at: dp.submittedAt,
-      payload: JSON.stringify(dp.payload),
+      payload: dp.payload,
     })),
     format: "JSONEachRow",
   });

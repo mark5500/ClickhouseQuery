@@ -1,6 +1,6 @@
 import type { Subject } from "./types.js";
 
-const SUBJECT_COUNT = 20_000;
+const SUBJECT_COUNT = 50_000;
 
 // Deterministic, not random — every seed script imports this and must agree
 // on the same set of subject ids across separate process runs.

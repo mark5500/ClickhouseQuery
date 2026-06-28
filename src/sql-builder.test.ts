@@ -14,6 +14,27 @@ const latest = { strategy: "pick", by: { field: "submitted_at", direction: "desc
 const bmiLatest = { id: "bmi", extract: "bmi", resolve: latest } as const;
 const demoLatest = { id: "demo", extract: "demographics", resolve: latest } as const;
 
+// "pick" CTEs use GROUP BY subject_id + argMax(field, submitted_at) instead
+// of ORDER BY ... LIMIT 1 BY subject_id — same "latest record per subject"
+// result, but as a single hash aggregation instead of a full sort (measured
+// ~3x faster on this project's data). All datapoint-field/payload references
+// are qualified with `data_points.` because an unqualified reference to a
+// column with the same name as one of this query's own output aliases (e.g.
+// `max(submitted_at) AS submitted_at`) gets resolved to that alias instead
+// of the underlying column, which trips ClickHouse's "aggregate inside
+// aggregate" check once it's wrapped in another aggregate (argMax's second
+// argument).
+const bmiCte = `  bmi AS (
+    SELECT
+      subject_id,
+      argMax(data_points.id, data_points.submitted_at) AS \`id\`,
+      max(data_points.submitted_at) AS \`submitted_at\`,
+      argMax(data_points.payload.\`bmi\`::Float64, data_points.submitted_at) AS \`bmi\`
+    FROM data_points
+    WHERE data_extract_id = 'bmi'
+    GROUP BY subject_id
+  )`; // payload.\`field\`::Type reads a native JSON sub-column directly
+
 test("distribution (auto): builds a server-side histogram, not raw values", () => {
   const viz: Visualisation = {
     id: "bmi-distribution",
@@ -29,19 +50,13 @@ test("distribution (auto): builds a server-side histogram, not raw values", () =
   assert.equal(
     buildSql(viz, registry),
     `WITH
-  bmi AS (
-    SELECT *
-    FROM data_points
-    WHERE data_extract_id = 'bmi'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
-  )
+${bmiCte}
 SELECT
   round(tupleElement(bin, 1), 2) AS \`rangeStart\`,
   round(tupleElement(bin, 2), 2) AS \`rangeEnd\`,
   tupleElement(bin, 3) AS \`count\`
 FROM (
-    SELECT arrayJoin(histogram(8)(JSONExtractFloat(bmi.payload, 'bmi'))) AS bin
+    SELECT arrayJoin(histogram(8)(bmi.\`bmi\`)) AS bin
     FROM bmi
 )
 ORDER BY \`rangeStart\``
@@ -61,7 +76,7 @@ test("distribution (auto): defaults to 8 bins and applies filters inside the sub
 
   const sql = buildSql(viz, registry);
   assert.match(sql, /FROM \(\n {4}SELECT arrayJoin\(histogram\(8\)/);
-  assert.match(sql, /WHERE JSONExtractFloat\(bmi\.payload, 'bmi'\) > 18\n\)/);
+  assert.match(sql, /WHERE bmi\.`bmi` > 18\n\)/);
 });
 
 test("distribution (fixed-width): equal-width buckets over an explicit range", () => {
@@ -79,19 +94,13 @@ test("distribution (fixed-width): equal-width buckets over an explicit range", (
   assert.equal(
     buildSql(viz, registry),
     `WITH
-  bmi AS (
-    SELECT *
-    FROM data_points
-    WHERE data_extract_id = 'bmi'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
-  )
+${bmiCte}
 SELECT
   round(15 + bucketIndex * 5, 2) AS \`rangeStart\`,
   round(15 + (bucketIndex + 1) * 5, 2) AS \`rangeEnd\`,
   toFloat64(count()) AS \`count\`
 FROM (
-    SELECT least(greatest(floor((JSONExtractFloat(bmi.payload, 'bmi') - 15) / 5), 0), 5) AS bucketIndex
+    SELECT least(greatest(floor((bmi.\`bmi\` - 15) / 5), 0), 5) AS bucketIndex
     FROM bmi
 )
 GROUP BY bucketIndex
@@ -122,19 +131,13 @@ test("distribution (custom): named buckets via multiIf, ordered by declared orde
   assert.equal(
     buildSql(viz, registry),
     `WITH
-  bmi AS (
-    SELECT *
-    FROM data_points
-    WHERE data_extract_id = 'bmi'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
-  )
+${bmiCte}
 SELECT
-  multiIf(JSONExtractFloat(bmi.payload, 'bmi') < 18.5, 'Underweight', JSONExtractFloat(bmi.payload, 'bmi') < 25, 'Normal', JSONExtractFloat(bmi.payload, 'bmi') < 30, 'Overweight', 'Obese') AS \`category\`,
+  multiIf(bmi.\`bmi\` < 18.5, 'Underweight', bmi.\`bmi\` < 25, 'Normal', bmi.\`bmi\` < 30, 'Overweight', 'Obese') AS \`category\`,
   toFloat64(count()) AS \`count\`
 FROM bmi
-GROUP BY \`category\`, multiIf(JSONExtractFloat(bmi.payload, 'bmi') < 18.5, 0, JSONExtractFloat(bmi.payload, 'bmi') < 25, 1, JSONExtractFloat(bmi.payload, 'bmi') < 30, 2, 3)
-ORDER BY multiIf(JSONExtractFloat(bmi.payload, 'bmi') < 18.5, 0, JSONExtractFloat(bmi.payload, 'bmi') < 25, 1, JSONExtractFloat(bmi.payload, 'bmi') < 30, 2, 3)`
+GROUP BY \`category\`, multiIf(bmi.\`bmi\` < 18.5, 0, bmi.\`bmi\` < 25, 1, bmi.\`bmi\` < 30, 2, 3)
+ORDER BY multiIf(bmi.\`bmi\` < 18.5, 0, bmi.\`bmi\` < 25, 1, bmi.\`bmi\` < 30, 2, 3)`
   );
 });
 
@@ -169,8 +172,8 @@ test("bucket truncates a date field for grouped time-series aggregation", () => 
   };
 
   const sql = buildSql(viz, registry);
-  assert.match(sql, /toStartOfMonth\(bmi\.submitted_at\) AS `x`/);
-  assert.match(sql, /GROUP BY toStartOfMonth\(bmi\.submitted_at\)/);
+  assert.match(sql, /toStartOfMonth\(bmi\.`submitted_at`\) AS `x`/);
+  assert.match(sql, /GROUP BY toStartOfMonth\(bmi\.`submitted_at`\)/);
 });
 
 test("bar: joins extracts, aggregates value, groups by category, canonical aliases", () => {
@@ -188,26 +191,23 @@ test("bar: joins extracts, aggregates value, groups by category, canonical alias
   assert.equal(
     buildSql(viz, registry),
     `WITH
-  bmi AS (
-    SELECT *
-    FROM data_points
-    WHERE data_extract_id = 'bmi'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
-  ),
+${bmiCte},
   demo AS (
-    SELECT *
+    SELECT
+      subject_id,
+      argMax(data_points.id, data_points.submitted_at) AS \`id\`,
+      max(data_points.submitted_at) AS \`submitted_at\`,
+      argMax(data_points.payload.\`sex\`::String, data_points.submitted_at) AS \`sex\`
     FROM data_points
     WHERE data_extract_id = 'demographics'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
+    GROUP BY subject_id
   )
 SELECT
-  JSONExtractString(demo.payload, 'sex') AS \`category\`,
-  avg(JSONExtractFloat(bmi.payload, 'bmi')) AS \`value\`
+  demo.\`sex\` AS \`category\`,
+  avg(bmi.\`bmi\`) AS \`value\`
 FROM bmi
 INNER JOIN demo ON bmi.subject_id = demo.subject_id
-GROUP BY JSONExtractString(demo.payload, 'sex')`
+GROUP BY demo.\`sex\``
   );
 });
 
@@ -225,10 +225,7 @@ test("bar with series: groups by category and series", () => {
   };
 
   const sql = buildSql(viz, registry);
-  assert.match(
-    sql,
-    /GROUP BY JSONExtractString\(demo\.payload, 'sex'\), JSONExtractString\(demo\.payload, 'familyName'\)$/
-  );
+  assert.match(sql, /GROUP BY demo\.`sex`, demo\.`familyName`$/);
 });
 
 test("count aggregate is cast to Float64 to avoid UInt64 string serialization", () => {
@@ -244,7 +241,7 @@ test("count aggregate is cast to Float64 to avoid UInt64 string serialization", 
   };
 
   const sql = buildSql(viz, registry);
-  assert.match(sql, /toFloat64\(count\(demo\.subject_id\)\) AS `value`/);
+  assert.match(sql, /toFloat64\(count\(demo\.`subject_id`\)\) AS `value`/);
 });
 
 test("line: 'all' resolve, series + x + y, ordered by x, canonical aliases", () => {
@@ -270,17 +267,21 @@ test("line: 'all' resolve, series + x + y, ordered by x, canonical aliases", () 
     buildSql(viz, registry),
     `WITH
   bmi AS (
-    SELECT *
+    SELECT
+      subject_id,
+      data_points.id AS \`id\`,
+      data_points.submitted_at AS \`submitted_at\`,
+      data_points.payload.\`bmi\`::Float64 AS \`bmi\`
     FROM data_points
     WHERE data_extract_id = 'bmi'
     ORDER BY submitted_at ASC
   )
 SELECT
-  bmi.subject_id AS \`series\`,
-  bmi.submitted_at AS \`x\`,
-  JSONExtractFloat(bmi.payload, 'bmi') AS \`y\`
+  bmi.\`subject_id\` AS \`series\`,
+  bmi.\`submitted_at\` AS \`x\`,
+  bmi.\`bmi\` AS \`y\`
 FROM bmi
-ORDER BY bmi.submitted_at ASC`
+ORDER BY bmi.\`submitted_at\` ASC`
   );
 });
 
@@ -300,7 +301,7 @@ test("scatter: x + y + series, no grouping, no ordering, canonical aliases", () 
   const sql = buildSql(viz, registry);
   assert.doesNotMatch(sql, /\nGROUP BY/); // no top-level GROUP BY
   assert.doesNotMatch(sql, /\nORDER BY/); // no top-level ORDER BY (CTE ones are indented)
-  assert.match(sql, /JSONExtractString\(demo\.payload, 'dateOfBirth'\) AS `x`/);
+  assert.match(sql, /demo\.`dateOfBirth` AS `x`/);
 });
 
 test("table: explicit columns keep their own aliases, filters, sort, pagination", () => {
@@ -322,26 +323,24 @@ test("table: explicit columns keep their own aliases, filters, sort, pagination"
   assert.equal(
     buildSql(viz, registry),
     `WITH
-  bmi AS (
-    SELECT *
-    FROM data_points
-    WHERE data_extract_id = 'bmi'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
-  ),
+${bmiCte},
   demo AS (
-    SELECT *
+    SELECT
+      subject_id,
+      argMax(data_points.id, data_points.submitted_at) AS \`id\`,
+      max(data_points.submitted_at) AS \`submitted_at\`,
+      argMax(data_points.payload.\`sex\`::String, data_points.submitted_at) AS \`sex\`,
+      argMax(data_points.payload.\`familyName\`::String, data_points.submitted_at) AS \`familyName\`
     FROM data_points
     WHERE data_extract_id = 'demographics'
-    ORDER BY subject_id, submitted_at DESC
-    LIMIT 1 BY subject_id
+    GROUP BY subject_id
   )
 SELECT
-  JSONExtractFloat(bmi.payload, 'bmi') AS \`bmi_bmi\`
+  bmi.\`bmi\` AS \`bmi_bmi\`
 FROM bmi
 INNER JOIN demo ON bmi.subject_id = demo.subject_id
-WHERE JSONExtractFloat(bmi.payload, 'bmi') > 30 AND JSONExtractString(demo.payload, 'sex') IN ('male', 'female') AND JSONExtractString(demo.payload, 'familyName') LIKE '%son%'
-ORDER BY JSONExtractFloat(bmi.payload, 'bmi') DESC
+WHERE bmi.\`bmi\` > 30 AND demo.\`sex\` IN ('male', 'female') AND demo.\`familyName\` LIKE '%son%'
+ORDER BY bmi.\`bmi\` DESC
 LIMIT 20 OFFSET 40`
   );
 });
@@ -389,6 +388,25 @@ test("throws on unknown extract alias", () => {
   assert.throws(() => buildSql(viz, registry), /Unknown extract alias: 'missing'/);
 });
 
+test("pick with 'asc' direction uses argMin instead of argMax", () => {
+  const viz: Visualisation = {
+    id: "earliest-bmi",
+    type: "distribution",
+    title: "Earliest BMI",
+    extracts: [
+      { id: "bmi", extract: "bmi", resolve: { strategy: "pick", by: { field: "submitted_at", direction: "asc" } } },
+    ],
+    value: { extract: "bmi", field: "bmi" },
+    filters: [],
+    pagination: null,
+  };
+
+  const sql = buildSql(viz, registry);
+  assert.match(sql, /argMin\(data_points\.id, data_points\.submitted_at\) AS `id`/);
+  assert.match(sql, /min\(data_points\.submitted_at\) AS `submitted_at`/);
+  assert.match(sql, /argMin\(data_points\.payload\.`bmi`::Float64, data_points\.submitted_at\) AS `bmi`/);
+});
+
 test("buildCountSql counts the joined/filtered rows, ignoring select/limit", () => {
   const viz: Visualisation = {
     id: "filtered-table",
@@ -403,8 +421,8 @@ test("buildCountSql counts the joined/filtered rows, ignoring select/limit", () 
 
   const sql = buildCountSql(viz, registry);
   assert.match(sql, /SELECT toFloat64\(count\(\)\) AS `total`/);
-  assert.match(sql, /WHERE JSONExtractString\(demo\.payload, 'sex'\) = 'female'/);
-  assert.doesNotMatch(sql, /\nLIMIT \d+ OFFSET/); // pagination ignored (CTEs' own `LIMIT 1 BY` is fine)
+  assert.match(sql, /WHERE demo\.`sex` = 'female'/);
+  assert.doesNotMatch(sql, /\nLIMIT \d+ OFFSET/); // pagination ignored
 });
 
 // --- schema validation ----------------------------------------------------

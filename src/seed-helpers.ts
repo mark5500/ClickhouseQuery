@@ -8,8 +8,9 @@ export async function ensureDataPointsTable(clickhouse: ClickHouseClient): Promi
         data_extract_id String,
         subject_id String,
         submitted_at DateTime,
-        payload String
+        payload JSON
       ) ENGINE = MergeTree()
+      PARTITION BY data_extract_id
       ORDER BY (data_extract_id, subject_id)
     `,
   });
