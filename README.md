@@ -17,3 +17,19 @@ npm run dev
 ```
 
 `src/index.ts` creates an `events` table, inserts a row, and queries it back using `@clickhouse/client`.
+
+## Seed Data
+
+Seed everything:
+
+```
+npm run seed:demographics && npm run seed:bmi && npm run seed:blood-pressure
+```
+
+Or run individual seed scripts:
+
+```
+npm run seed:demographics
+npm run seed:bmi
+npm run seed:blood-pressure
+```
