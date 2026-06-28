@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/dotnet/">
+    <Project Path="dotnet/QueryBuilder.SqlBuilder.Tests/QueryBuilder.SqlBuilder.Tests.csproj" />
+    <Project Path="dotnet/QueryBuilder.SqlBuilder/QueryBuilder.SqlBuilder.csproj" />
+    <Project Path="dotnet/QueryBuilder.Visualisations.Tests/QueryBuilder.Visualisations.Tests.csproj" />
+    <Project Path="dotnet/QueryBuilder.Visualisations/QueryBuilder.Visualisations.csproj" />
+  </Folder>
+</Solution>
